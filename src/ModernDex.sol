@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import "hardhat/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -16,8 +15,12 @@ contract ModernDex {
     using SafeERC20 for IERC20;
 
     mapping(address tokenA => mapping(address tokenB => bytes32 poolId))
-        public tokensToPools;
-    mapping(bytes32 poolId => PoolData poolData) public idToPoolData;
+        public tokensToPool;
+    mapping(bytes32 poolId => PoolData poolData) public idToPool;
+
+    function getData(bytes32 id) public view returns (PoolData memory) {
+        return idToPool[id];
+    }
 
     function createPool(
         address token1,
@@ -35,8 +38,8 @@ contract ModernDex {
                 : (token2, token2Amount, token1, token1Amount);
         bytes32 poolId = keccak256(abi.encode(tokenA, tokenB));
 
-        tokensToPools[tokenA][tokenB] = poolId;
-        idToPoolData[poolId] = PoolData({
+        tokensToPool[tokenA][tokenB] = poolId;
+        idToPool[poolId] = PoolData({
             tokenA: tokenA,
             liquidityA: liquidityA,
             tokenB: tokenB,
