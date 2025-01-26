@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {IModernDex} from "./interface/IModernDex.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -11,12 +12,13 @@ struct PoolData {
     uint256 liquidityB;
 }
 
-contract ModernDex {
+contract ModernDex is IModernDex {
     using SafeERC20 for IERC20;
 
     mapping(address tokenA => mapping(address tokenB => bytes32 poolId))
         public tokensToPool;
     mapping(bytes32 poolId => PoolData poolData) private idToPool;
+    mapping(address owner => mapping(bytes32 poolId => uint256 shares)) public shares;
 
     function getPoolData(bytes32 id) external view returns (PoolData memory) {
         return idToPool[id];
@@ -46,6 +48,8 @@ contract ModernDex {
             liquidityB: liquidityB
         });
 
+        shares[msg.sender][poolId] = 1000;
+
         IERC20(token1).safeTransferFrom(
             msg.sender,
             address(this),
@@ -56,12 +60,15 @@ contract ModernDex {
             address(this),
             token2Amount
         );
+
+        emit PoolCreated(poolId, tokenA, liquidityA, tokenB, liquidityB);
     }
 
     function swap(
         address tokenIn,
         uint256 amountIn,
         address tokenOut
+        // address receiver
     ) external {
         (address tokenA, address tokenB) = orderTokens(tokenIn, tokenOut);
         bytes32 poolId = tokensToPool[tokenA][tokenB];
@@ -69,12 +76,13 @@ contract ModernDex {
 
         uint256 amountOut;
         {
-            uint256 invariant = poolData.liquidityA * poolData.liquidityB;
-            uint256 liquityIn = tokenIn == tokenA ? poolData.liquidityA : poolData.liquidityB;
-            uint256 newLiquidityIn = liquityIn + amountIn;
-            uint256 newLiquidityOut = invariant / newLiquidityIn;
+            uint256 k = poolData.liquidityA * poolData.liquidityB;
+            uint256 liquidityIn = tokenIn == tokenA ? poolData.liquidityA : poolData.liquidityB;
+            uint256 newLiquidityIn = liquidityIn + amountIn;
+            uint256 newLiquidityOut = k / newLiquidityIn;
             uint256 liquityOut = tokenOut == tokenA ? poolData.liquidityA : poolData.liquidityB;
-            amountOut = liquityOut - newLiquidityOut;
+            uint256 fullAmountOut = liquityOut - newLiquidityOut;
+            amountOut = fullAmountOut * 998 / 1000;
                 
             poolData.liquidityA = tokenA == tokenIn ? newLiquidityIn : newLiquidityOut;
             poolData.liquidityB = tokenB == tokenIn ? newLiquidityIn : newLiquidityOut;
@@ -82,6 +90,8 @@ contract ModernDex {
 
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
         IERC20(tokenOut).safeTransfer(msg.sender, amountOut);
+
+        emit Swap(msg.sender, tokenIn, amountIn, tokenOut, amountOut);
     }
 
     function orderTokens(

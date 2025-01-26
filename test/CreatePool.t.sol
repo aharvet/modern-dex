@@ -1,100 +1,102 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 import {Test, console} from "forge-std/Test.sol";
 import {MockERC20} from "../src/mocks/MockERC20.sol";
 import {ModernDex, PoolData} from "../src/ModernDex.sol";
+import {Helpers} from "./Helpers.sol";
+import {IModernDex} from "../src/interface/IModernDex.sol";
 
 contract CreatePoolTest is Test {
-    // uint256 public constant MAX = type(uint256).max;
-
-    uint256 public constant token1Amount = 300 ether;
-    uint256 public constant token2Amount = 1000 ether;
+    uint256 public constant amount1 = 300 ether;
+    uint256 public constant amount2 = 1000 ether;
+    uint256 public constant amount3 = 500 ether;
+    uint256 public constant amount4 = 1200 ether;
 
     MockERC20 public token1;
     MockERC20 public token2;
+    MockERC20 public token3;
     ModernDex public dex;
-
-    function orderTokens(
-        address _token1,
-        address _token2
-    ) private pure returns (address tokenA, address tokenB) {
-        (tokenA, tokenB) = _token1 < _token2
-            ? (address(_token1), address(_token2))
-            : (address(_token2), address(_token1));
-    }
-
-    function getPoolId(
-        address _token1,
-        address _token2
-    ) private pure returns (bytes32) {
-        (address tokenA, address tokenB) = orderTokens(_token1, _token2);
-        return keccak256(abi.encode(tokenA, tokenB));
-    }
 
     function setUp() public {
         token1 = new MockERC20("Token1", "TK1");
         token2 = new MockERC20("Token2", "TK2");
+        token3 = new MockERC20("Token3", "TK3");
         dex = new ModernDex();
 
-        token1.approve(address(dex), token1Amount);
-        token2.approve(address(dex), token2Amount);
+        token1.approve(address(dex), amount1);
+        token2.approve(address(dex), amount2 + amount3);
+        token3.approve(address(dex), amount4);
     }
 
-    function test_DepositTokens() public {
-        dex.createPool(
-            address(token1),
-            token1Amount,
-            address(token2),
-            token2Amount
-        );
+    function testRegisterPools() public {
+        (address tokenA, address tokenB) = Helpers.orderTokens(address(token1), address(token2));
+        dex.createPool(address(token1), amount1, address(token2), amount2);
 
-        assertEq(token1.balanceOf(address(dex)), token1Amount);
-        assertEq(token2.balanceOf(address(dex)), token2Amount);
+        token2.approve(address(dex), amount3);
+        (address tokenC, address tokenD) = Helpers.orderTokens(address(token2), address(token3));
+        dex.createPool(address(token2), amount3, address(token3), amount4);
+
+        bytes32 expectedIdPool1 = Helpers.getPoolId(tokenA, tokenB);
+        bytes32 expectedIdPool2 = Helpers.getPoolId(tokenC, tokenD);
+
+        assertEq(dex.tokensToPool(tokenA, tokenB), expectedIdPool1);
+        assertEq(dex.tokensToPool(tokenC, tokenD), expectedIdPool2);
     }
 
-    function test_RegisterPool() public {
-        (address tokenA, address tokenB) = orderTokens(
-            address(token1),
-            address(token2)
-        );
-        bytes32 expectedId = getPoolId(tokenA, tokenB);
+    function testAccountForDeposit() public {
+        (address tokenA, uint256 liquidityA, address tokenB, uint256 liquidityB) =
+            Helpers.orderTokensData(address(token1), amount1, address(token2), amount2);
+        dex.createPool(address(token1), amount1, address(token2), amount2);
 
-        dex.createPool(
-            address(token1),
-            token1Amount,
-            address(token2),
-            token2Amount
-        );
+        (address tokenC, uint256 liquidityC, address tokenD, uint256 liquidityD) =
+            Helpers.orderTokensData(address(token2), amount3, address(token3), amount4);
+        dex.createPool(address(token2), amount3, address(token3), amount4);
 
-        assertEq(dex.tokensToPool(tokenA, tokenB), expectedId);
+        bytes32 pool1Id = Helpers.getPoolId(tokenA, tokenB);
+        bytes32 pool2Id = Helpers.getPoolId(tokenC, tokenD);
+
+        PoolData memory pool1Data = dex.getPoolData(pool1Id);
+        PoolData memory pool2Data = dex.getPoolData(pool2Id);
+
+        assertEq(pool1Data.tokenA, tokenA);
+        assertEq(pool1Data.liquidityA, liquidityA);
+        assertEq(pool1Data.tokenB, tokenB);
+        assertEq(pool1Data.liquidityB, liquidityB);
+
+        assertEq(pool1Data.tokenA, tokenC);
+        assertEq(pool2Data.liquidityA, liquidityC);
+        assertEq(pool2Data.tokenB, tokenD);
+        assertEq(pool2Data.liquidityB, liquidityD);
     }
 
-    function test_AccountForDeposit() public {
-        (address tokenA, address tokenB) = orderTokens(
-            address(token1),
-            address(token2)
-        );
-        bytes32 id = getPoolId(tokenA, tokenB);
+    function testTokenCollection() public {
+        dex.createPool(address(token1), amount1, address(token2), amount2);
+        assertEq(MockERC20(token1).balanceOf(address(dex)), amount1);
+        assertEq(MockERC20(token2).balanceOf(address(dex)), amount2);
 
-        dex.createPool(
-            address(token1),
-            token1Amount,
-            address(token2),
-            token2Amount
-        );
+        dex.createPool(address(token2), amount3, address(token3), amount4);
+        assertEq(MockERC20(token2).balanceOf(address(dex)), amount2 + amount3);
+        assertEq(MockERC20(token3).balanceOf(address(dex)), amount4);
+    }
 
-        PoolData memory poolData = dex.getPoolData(id);
+    function testAccountForShares() public {
+        (address tokenA, address tokenB) = Helpers.orderTokens(address(token1), address(token2));
+        bytes32 poolId = Helpers.getPoolId(tokenA, tokenB);
 
-        assertEq(poolData.tokenA, tokenA);
-        assertEq(
-            poolData.liquidityA,
-            MockERC20(tokenA).balanceOf(address(dex))
-        );
-        assertEq(poolData.tokenB, tokenB);
-        assertEq(
-            poolData.liquidityB,
-            MockERC20(tokenB).balanceOf(address(dex))
-        );
+        dex.createPool(address(token1), amount1, address(token2), amount2);
+        uint256 shareAmount = dex.shares(address(this), poolId);
+
+        assertEq(shareAmount, 1000);
+    }
+
+    function testEmitEvent() public {
+        (address tokenA, uint256 liquidityA, address tokenB, uint256  liquidityB) = Helpers.orderTokensData(address(token1), amount1, address(token2), amount2);
+        bytes32 poolId = Helpers.getPoolId(tokenA, tokenB);
+
+        vm.expectEmit(true, true, true, true);
+        emit IModernDex.PoolCreated(poolId, tokenA, liquidityA, tokenB, liquidityB);
+
+        dex.createPool(address(token1), amount1, address(token2), amount2);
     }
 }

@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 import {Test, console} from "forge-std/Test.sol";
 import {MockERC20} from "../src/mocks/MockERC20.sol";
 import {ModernDex, PoolData} from "../src/ModernDex.sol";
-import {MAX, Helpers} from "./Helper.sol";
+import {MAX, Helpers} from "./Helpers.sol";
+import {IModernDex} from "../src/interface/IModernDex.sol";
 
 contract SwapTest is Test {
     uint256 public constant token1Amount = 300 ether;
@@ -22,23 +23,14 @@ contract SwapTest is Test {
         token1.approve(address(dex), token1Amount);
         token2.approve(address(dex), token2Amount);
 
-        dex.createPool(
-            address(token1),
-            token1Amount,
-            address(token2),
-            token2Amount
-        );
+        dex.createPool(address(token1), token1Amount, address(token2), token2Amount);
     }
 
-    function test_SwapOneWay(uint256 amountIn) public {
-        vm.assume(amountIn <= MAX - amountIn);
+    function testSwapOneWay(uint256 amountIn) public {
+        vm.assume(amountIn <= MAX - token1Amount);
+        vm.assume(amountIn < MAX / 2);
 
-        uint256 invariant = token1Amount * token2Amount;
-        uint256 liquityIn = token1Amount;
-        uint256 newLiquidityIn = liquityIn + amountIn;
-        uint256 newLiquidityOut = invariant / newLiquidityIn;
-        uint256 liquityOut = token2Amount;
-        uint256 expectedAmountOut = liquityOut - newLiquidityOut;
+        uint256 expectedAmountOut = getAmountOut(token1Amount, token2Amount, amountIn);
 
         uint256 initialBalance = token2.balanceOf(address(this));
         token1.approve(address(dex), amountIn);
@@ -48,15 +40,40 @@ contract SwapTest is Test {
         assertEq(finalBalance - initialBalance, expectedAmountOut);
     }
 
-    // function test_SwapTheOtherWay(uint256 amountIn) public {
-    //     // uint256 amountIn = 1 ether;
-    //     uint256 expectedAmountOut = (amountIn * token1Amount) / token2Amount;
+    function testSwapTheOtherWay(uint256 amountIn) public {
+        vm.assume(amountIn <= MAX - token2Amount);
+        vm.assume(amountIn < MAX / 2);
 
-    //     uint256 initialBalance = token1.balanceOf(address(this));
-    //     token2.approve(address(dex), amountIn);
-    //     dex.swap(address(token2), amountIn, address(token1));
-    //     uint256 finalBalance = token1.balanceOf(address(this));
+        uint256 expectedAmountOut = getAmountOut(token2Amount, token1Amount, amountIn);
 
-    //     assertEq(finalBalance - initialBalance, expectedAmountOut);
-    // }
+        uint256 initialBalance = token1.balanceOf(address(this));
+        token2.approve(address(dex), amountIn);
+        dex.swap(address(token2), amountIn, address(token1));
+        uint256 finalBalance = token1.balanceOf(address(this));
+
+        assertEq(finalBalance - initialBalance, expectedAmountOut);
+    }
+
+    function testEmitEvent() public {
+        uint256 amountIn = 223 ether;
+        uint256 amountOut = getAmountOut(token1Amount, token2Amount, amountIn);
+        token1.approve(address(dex), amountIn);
+        
+        vm.expectEmit(true, true, true, true);
+        emit IModernDex.Swap(address(this), address(token1), amountIn, address(token2), amountOut);
+
+        dex.swap(address(token1), amountIn, address(token2));
+    }
+
+
+    function getAmountOut(uint256 liquidityIn, uint256 liquidityOut, uint256 amountIn) private pure returns (uint256) {
+        uint256 k = liquidityIn * liquidityOut;
+
+        uint256 newLiquidityIn = liquidityIn + amountIn;
+        uint256 newLiquidityOut = k / newLiquidityIn;
+        uint256 expectedAmountOut = liquidityOut - newLiquidityOut;
+        uint256 expectedAmountOutMinFee = expectedAmountOut * 998 / 1000;
+
+        return expectedAmountOutMinFee;
+    }
 }
